@@ -1161,6 +1161,8 @@ document.getElementById('openSettingsBtn').addEventListener('click', () => {
   const cfg = CloudSync.getConfig();
   document.getElementById('sb-url').value = cfg.url || '';
   document.getElementById('sb-key').value = cfg.key || '';
+  const em = document.getElementById('sb-email');
+  if (em && !em.value) em.value = cfg.email || '';
   CloudSync.updateUI();
 });
 
@@ -1170,7 +1172,7 @@ async function ensureCloudClientFromInputs() {
   if (!url || !key) { showToast('请先填写 Supabase URL 和 Anon Key'); return false; }
   CloudSync.saveConfig(url, key);
   if (!CloudSync.client || CloudSync.getConfig().url !== url) {
-    CloudSync.client = window.supabase.createClient(url, key);
+    CloudSync.client = CloudSync.createSupabaseClient(url, key);
   }
   return true;
 }

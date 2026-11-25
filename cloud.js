@@ -1,44 +1,119 @@
 const CloudSync = {
   CONFIG_KEY: 'lsh_supabase_config_v1',
+  SESSION_KEY: 'lsh_supabase_session_v1',
   client: null,
   user: null,
   channel: null,
   pushTimer: null,
   pollTimer: null,
   isApplyingRemote: false,
-  lastRemoteUpdatedAt: null,
+  lastError: '',
 
   getConfig() {
-    try {
-      return JSON.parse(localStorage.getItem(this.CONFIG_KEY) || '{}');
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(this.CONFIG_KEY) || '{}'); }
+    catch { return {}; }
   },
 
-  saveConfig(url, key) {
-    localStorage.setItem(this.CONFIG_KEY, JSON.stringify({ url: url.trim(), key: key.trim() }));
+  saveConfig(url, key, email = '') {
+    const prev = this.getConfig();
+    localStorage.setItem(this.CONFIG_KEY, JSON.stringify({
+      url: (url !== undefined ? url : prev.url || '').trim(),
+      key: (key !== undefined ? key : prev.key || '').trim(),
+      email: (email || prev.email || '').trim()
+    }));
+  },
+
+  saveSessionTokens(session) {
+    if (!session || !session.refresh_token) return;
+    try {
+      localStorage.setItem(this.SESSION_KEY, JSON.stringify({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        email: session.user?.email || ''
+      }));
+      if (session.user?.email) this.saveConfig(undefined, undefined, session.user.email);
+    } catch {}
+  },
+
+  clearSessionTokens() {
+    try { localStorage.removeItem(this.SESSION_KEY); } catch {}
+  },
+
+  createSupabaseClient(url, key) {
+    return window.supabase.createClient(url, key, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        storageKey: 'focusos_sb_auth_v1',
+        storage: window.localStorage
+      }
+    });
   },
 
   async init() {
+    this.lastError = '';
     const cfg = this.getConfig();
-    if (!cfg.url || !cfg.key || !window.supabase) {
+    if (!window.supabase) {
+      this.lastError = '云同步组件加载失败，请检查网络后刷新';
       this.updateUI();
       return false;
     }
+    if (!cfg.url || !cfg.key) {
+      this.updateUI();
+      return false;
+    }
+
     try {
-      this.client = window.supabase.createClient(cfg.url, cfg.key);
-      const { data } = await this.client.auth.getSession();
-      this.user = data?.session?.user || null;
+      this.client = this.createSupabaseClient(cfg.url, cfg.key);
+      this.client.auth.onAuthStateChange((event, session) => {
+        if (session?.user) {
+          this.user = session.user;
+          this.saveSessionTokens(session);
+          this.updateUI();
+        } else if (event === 'SIGNED_OUT') {
+          this.user = null;
+          this.clearSessionTokens();
+          this.updateUI();
+        }
+      });
+
+      const { data, error } = await this.client.auth.getSession();
+      if (error) this.lastError = error.message;
+      let session = data?.session || null;
+
+      // Fallback: restore from backup tokens if Supabase localStorage key was missed
+      if (!session) {
+        try {
+          const raw = localStorage.getItem(this.SESSION_KEY);
+          if (raw) {
+            const tokens = JSON.parse(raw);
+            if (tokens.refresh_token) {
+              const res = await this.client.auth.setSession({
+                access_token: tokens.access_token || '',
+                refresh_token: tokens.refresh_token
+              });
+              session = res?.data?.session || null;
+              if (session) this.saveSessionTokens(session);
+            }
+          }
+        } catch {}
+      }
+
+      this.user = session?.user || null;
       if (this.user) {
+        this.saveSessionTokens(session);
+        this.updateUI();
         await this.pullAndMerge(true);
         this.subscribeRealtime();
         this.startPolling();
+      } else {
+        this.updateUI();
       }
-      this.updateUI();
       return Boolean(this.user);
     } catch (e) {
       console.warn('CloudSync init warning:', e);
+      this.lastError = e.message || '初始化失败';
       this.updateUI();
       return false;
     }
@@ -46,10 +121,12 @@ const CloudSync = {
 
   async signUp(email, password) {
     if (!this.client) return showToast('请先填写并保存 Supabase URL 和 Key');
+    this.saveConfig(undefined, undefined, email);
     const { data, error } = await this.client.auth.signUp({ email, password });
     if (error) return showToast('注册失败：' + error.message);
     this.user = data?.user || null;
     if (data?.session) {
+      this.saveSessionTokens(data.session);
       await this.pullAndMerge(true);
       this.subscribeRealtime();
       this.startPolling();
@@ -62,13 +139,15 @@ const CloudSync = {
 
   async signIn(email, password) {
     if (!this.client) return showToast('请先填写并保存 Supabase URL 和 Key');
+    this.saveConfig(undefined, undefined, email);
     const { data, error } = await this.client.auth.signInWithPassword({ email, password });
     if (error) return showToast('登录失败：' + error.message);
     this.user = data.user;
+    this.saveSessionTokens(data.session);
+    this.updateUI();
     await this.pullAndMerge(false);
     this.subscribeRealtime();
     this.startPolling();
-    this.updateUI();
     showToast('已登录，云端同步已开启');
   },
 
@@ -78,6 +157,7 @@ const CloudSync = {
     if (this.client) await this.client.auth.signOut();
     this.user = null;
     this.channel = null;
+    this.clearSessionTokens();
     this.updateUI();
     showToast('已退出云端账号（本地数据仍保留）');
   },
@@ -99,7 +179,6 @@ const CloudSync = {
           { onConflict: 'user_id' }
         );
       if (error) throw error;
-      this.lastRemoteUpdatedAt = ts;
       this.setDockStatus('synced');
     } catch (e) {
       console.warn('Cloud push error:', e);
@@ -134,8 +213,6 @@ const CloudSync = {
 
       const remote = data.payload;
       const remoteTs = remote.meta?.updatedAt || data.updated_at || '2020-01-01T00:00:00.000Z';
-      this.lastRemoteUpdatedAt = remoteTs;
-
       const remoteTime = new Date(remoteTs).getTime();
       const localTime = new Date(appState.meta?.updatedAt || 0).getTime();
       const localIsSeed = Boolean(appState.meta?.isSeed);
@@ -210,7 +287,9 @@ const CloudSync = {
       if (signedInBox) signedInBox.style.display = 'flex';
       this.setDockStatus('synced');
     } else {
-      statusBox.textContent = '当前为本地双层保存模式（登录后即可开启 Mac / iPad / iPhone 三端同步）';
+      statusBox.textContent = this.lastError
+        ? `云端未连接（${this.lastError}）`
+        : '当前为本地双层保存模式（登录后即可开启 Mac / iPad / iPhone 三端同步）';
       if (authForm) authForm.style.display = 'block';
       if (signedInBox) signedInBox.style.display = 'none';
     }
