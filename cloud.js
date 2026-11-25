@@ -1,6 +1,8 @@
 const CloudSync = {
   CONFIG_KEY: 'lsh_supabase_config_v1',
   SESSION_KEY: 'lsh_supabase_session_v1',
+  DEFAULT_URL: 'https://txkzzlcfeexfnwqeeuzr.supabase.co',
+  DEFAULT_KEY: 'sb_publishable_mv-O0u202Z0EudTvYfhBVg_3l13CkPn',
   client: null,
   user: null,
   channel: null,
@@ -10,8 +12,16 @@ const CloudSync = {
   lastError: '',
 
   getConfig() {
-    try { return JSON.parse(localStorage.getItem(this.CONFIG_KEY) || '{}'); }
-    catch { return {}; }
+    try {
+      const saved = JSON.parse(localStorage.getItem(this.CONFIG_KEY) || '{}');
+      return {
+        url: saved.url || this.DEFAULT_URL,
+        key: saved.key || this.DEFAULT_KEY,
+        email: saved.email || ''
+      };
+    } catch {
+      return { url: this.DEFAULT_URL, key: this.DEFAULT_KEY, email: '' };
+    }
   },
 
   saveConfig(url, key, email = '') {
