@@ -160,9 +160,12 @@ const StorageService = {
     return idbData || lsData || null;
   },
 
-  save(state) {
+  save(state, preserveTimestamp = false) {
     state.meta = state.meta || {};
-    state.meta.updatedAt = new Date().toISOString();
+    if (!preserveTimestamp) {
+      state.meta.updatedAt = new Date().toISOString();
+      delete state.meta.isSeed;
+    }
     state.meta.schemaVersion = 2;
     this.updateSaveIndicator('saving');
 
@@ -199,7 +202,7 @@ const StorageService = {
 function createPersonalInitialState() {
   const now = new Date().toISOString();
   return {
-    meta: { updatedAt: now, schemaVersion: 2 },
+    meta: { updatedAt: '2020-01-01T00:00:00.000Z', schemaVersion: 2, isSeed: true },
     sprints: [
       { id: 'sp-eviews', title: '统计学 EViews 6.0 上机考', date: '2026-12-04', domain: 'study', note: '重点：课件梳理 + EViews 6.0 实操' },
       { id: 'sp-fin', title: '金融资产评估论文提交', date: '2026-12-07', domain: 'study', note: '定稿排版 + 估值模型核对' },

@@ -4,7 +4,9 @@ const CloudSync = {
   user: null,
   channel: null,
   pushTimer: null,
+  pollTimer: null,
   isApplyingRemote: false,
+  lastRemoteUpdatedAt: null,
 
   getConfig() {
     try {
@@ -31,6 +33,7 @@ const CloudSync = {
       if (this.user) {
         await this.pullAndMerge(true);
         this.subscribeRealtime();
+        this.startPolling();
       }
       this.updateUI();
       return Boolean(this.user);
@@ -47,8 +50,9 @@ const CloudSync = {
     if (error) return showToast('注册失败：' + error.message);
     this.user = data?.user || null;
     if (data?.session) {
-      await this.pushNow();
+      await this.pullAndMerge(true);
       this.subscribeRealtime();
+      this.startPolling();
       this.updateUI();
       showToast('注册成功，已开启云端三端同步');
     } else {
@@ -63,12 +67,14 @@ const CloudSync = {
     this.user = data.user;
     await this.pullAndMerge(false);
     this.subscribeRealtime();
+    this.startPolling();
     this.updateUI();
     showToast('已登录，云端同步已开启');
   },
 
   async signOut() {
     if (this.channel && this.client) this.client.removeChannel(this.channel);
+    clearInterval(this.pollTimer);
     if (this.client) await this.client.auth.signOut();
     this.user = null;
     this.channel = null;
@@ -79,23 +85,36 @@ const CloudSync = {
   schedulePush() {
     if (!this.client || !this.user || this.isApplyingRemote) return;
     clearTimeout(this.pushTimer);
-    this.pushTimer = setTimeout(() => this.pushNow(), 900);
+    this.pushTimer = setTimeout(() => this.pushNow(), 450);
   },
 
   async pushNow() {
     if (!this.client || !this.user) return;
     try {
-      const { error } = await this.client.from('focusos_state').upsert({
-        user_id: this.user.id,
-        payload: appState,
-        updated_at: appState.meta?.updatedAt || new Date().toISOString()
-      });
+      const ts = appState.meta?.updatedAt || new Date().toISOString();
+      const { error } = await this.client
+        .from('focusos_state')
+        .upsert(
+          { user_id: this.user.id, payload: appState, updated_at: ts },
+          { onConflict: 'user_id' }
+        );
       if (error) throw error;
+      this.lastRemoteUpdatedAt = ts;
       this.setDockStatus('synced');
     } catch (e) {
       console.warn('Cloud push error:', e);
       this.setDockStatus('local');
+      showToast('云端推送失败：' + (e.message || '请检查网络'));
     }
+  },
+
+  applyRemote(remote) {
+    this.isApplyingRemote = true;
+    appState = remote;
+    StorageService.save(appState, true);
+    renderApp();
+    this.isApplyingRemote = false;
+    this.setDockStatus('synced');
   },
 
   async pullAndMerge(silent = false) {
@@ -109,26 +128,26 @@ const CloudSync = {
       if (error) throw error;
 
       if (!data || !data.payload) {
-        // First time cloud sync: upload current local state
         await this.pushNow();
         return;
       }
 
       const remote = data.payload;
-      const remoteTime = new Date(remote.meta?.updatedAt || data.updated_at || 0).getTime();
-      const localTime = new Date(appState.meta?.updatedAt || 0).getTime();
+      const remoteTs = remote.meta?.updatedAt || data.updated_at || '2020-01-01T00:00:00.000Z';
+      this.lastRemoteUpdatedAt = remoteTs;
 
-      if (remoteTime > localTime) {
-        this.isApplyingRemote = true;
-        appState = remote;
-        StorageService.save(appState);
-        renderApp();
-        this.isApplyingRemote = false;
+      const remoteTime = new Date(remoteTs).getTime();
+      const localTime = new Date(appState.meta?.updatedAt || 0).getTime();
+      const localIsSeed = Boolean(appState.meta?.isSeed);
+
+      if (localIsSeed || remoteTime > localTime) {
+        this.applyRemote(remote);
         if (!silent) showToast('已从云端拉取最新数据');
       } else if (localTime > remoteTime) {
         await this.pushNow();
+      } else {
+        this.setDockStatus('synced');
       }
-      this.setDockStatus('synced');
     } catch (e) {
       console.warn('Cloud pull error:', e);
       if (!silent) showToast('云端拉取失败：' + e.message);
@@ -139,7 +158,7 @@ const CloudSync = {
     if (!this.client || !this.user) return;
     if (this.channel) this.client.removeChannel(this.channel);
     this.channel = this.client
-      .channel('focusos-realtime')
+      .channel('focusos-realtime-' + this.user.id.slice(0, 8))
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -151,16 +170,20 @@ const CloudSync = {
         const remoteTime = new Date(remote.meta?.updatedAt || 0).getTime();
         const localTime = new Date(appState.meta?.updatedAt || 0).getTime();
         if (remoteTime > localTime) {
-          this.isApplyingRemote = true;
-          appState = remote;
-          StorageService.save(appState);
-          renderApp();
-          this.isApplyingRemote = false;
-          this.setDockStatus('synced');
-          showToast('其他设备已更新，已自动同步');
+          this.applyRemote(remote);
+          showToast('其他设备已更新，已同步 ✓');
         }
       })
       .subscribe();
+  },
+
+  startPolling() {
+    clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => {
+      if (document.visibilityState === 'visible' && this.user && !this.isApplyingRemote) {
+        this.pullAndMerge(true);
+      }
+    }, 10000);
   },
 
   setDockStatus(mode) {

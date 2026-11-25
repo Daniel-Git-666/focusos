@@ -1151,7 +1151,7 @@ document.querySelectorAll('.modal-backdrop').forEach(bd => bd.addEventListener('
   if (window.location.protocol === 'file:') document.getElementById('protocolBanner').classList.add('show');
   const saved = await StorageService.load();
   if (saved && Array.isArray(saved.tasks) && Array.isArray(saved.meds)) appState = saved;
-  else { appState = createPersonalInitialState(); StorageService.save(appState); }
+  else { appState = createPersonalInitialState(); StorageService.save(appState, true); }
   StorageService.updateSaveIndicator('saved');
   renderApp();
   if (window.CloudSync) CloudSync.init();
@@ -1201,5 +1201,8 @@ document.getElementById('sbSignOutBtn').addEventListener('click', async () => {
 
 window.addEventListener('focus', () => {
   if (window.CloudSync && CloudSync.user) CloudSync.pullAndMerge(true);
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && window.CloudSync && CloudSync.user) CloudSync.pullAndMerge(true);
 });
 
