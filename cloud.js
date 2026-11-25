@@ -5,6 +5,7 @@ const CloudSync = {
   DEFAULT_KEY: 'sb_publishable_mv-O0u202Z0EudTvYfhBVg_3l13CkPn',
   client: null,
   user: null,
+  syncToken: '',
   channel: null,
   pushTimer: null,
   pollTimer: null,
@@ -27,8 +28,8 @@ const CloudSync = {
   saveConfig(url, key, email = '') {
     const prev = this.getConfig();
     localStorage.setItem(this.CONFIG_KEY, JSON.stringify({
-      url: (url !== undefined ? url : prev.url || '').trim(),
-      key: (key !== undefined ? key : prev.key || '').trim(),
+      url: (url !== undefined ? url : prev.url || this.DEFAULT_URL).trim(),
+      key: (key !== undefined ? key : prev.key || this.DEFAULT_KEY).trim(),
       email: (email || prev.email || '').trim()
     }));
   },
@@ -83,6 +84,7 @@ const CloudSync = {
           this.updateUI();
         } else if (event === 'SIGNED_OUT') {
           this.user = null;
+          this.syncToken = '';
           this.clearSessionTokens();
           this.updateUI();
         }
@@ -92,7 +94,6 @@ const CloudSync = {
       if (error) this.lastError = error.message;
       let session = data?.session || null;
 
-      // Fallback: restore from backup tokens if Supabase localStorage key was missed
       if (!session) {
         try {
           const raw = localStorage.getItem(this.SESSION_KEY);
@@ -113,8 +114,10 @@ const CloudSync = {
       this.user = session?.user || null;
       if (this.user) {
         this.saveSessionTokens(session);
+        await this.ensureSyncToken();
         this.updateUI();
         await this.pullAndMerge(true);
+        await this.pullAppleHealthLogs(true);
         this.subscribeRealtime();
         this.startPolling();
       } else {
@@ -129,6 +132,113 @@ const CloudSync = {
     }
   },
 
+  async ensureSyncToken() {
+    if (!this.client || !this.user) return '';
+    try {
+      const { data, error } = await this.client
+        .from('focusos_sync_tokens')
+        .select('token')
+        .eq('user_id', this.user.id)
+        .maybeSingle();
+      if (error) return '';
+      if (data?.token) {
+        this.syncToken = data.token;
+        return this.syncToken;
+      }
+      const newToken = 'fw_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+      const { error: insErr } = await this.client
+        .from('focusos_sync_tokens')
+        .insert({ user_id: this.user.id, token: newToken });
+      if (!insErr) this.syncToken = newToken;
+      return this.syncToken;
+    } catch {
+      return '';
+    }
+  },
+
+  async pullAppleHealthLogs(silent = false) {
+    if (!this.client || !this.user) return;
+    try {
+      const { data, error } = await this.client
+        .from('focusos_health_sync')
+        .select('*')
+        .eq('user_id', this.user.id)
+        .order('log_date', { ascending: true })
+        .limit(30);
+      if (error || !Array.isArray(data) || !data.length) return;
+
+      let changed = false;
+      appState.sleepLogs = appState.sleepLogs || [];
+      appState.activityLogs = appState.activityLogs || [];
+
+      data.forEach(row => {
+        const d = row.log_date;
+        const hrs = Number(row.sleep_hours || 0);
+        if (hrs > 0) {
+          const existing = appState.sleepLogs.find(x => x.date === d);
+          const nextBed = row.bedtime || '23:30';
+          if (!existing || existing.duration !== Number(hrs.toFixed(1)) || existing.bedtime !== nextBed) {
+            appState.sleepLogs = appState.sleepLogs.filter(x => x.date !== d);
+            appState.sleepLogs.push({
+              id: existing?.id || uid(),
+              date: d,
+              bedtime: nextBed,
+              duration: Number(hrs.toFixed(1)),
+              quality: 4,
+              source: 'apple_watch'
+            });
+            changed = true;
+          }
+        }
+
+        const km = Number(row.running_km || 0);
+        const kcal = Number(row.active_kcal || 0);
+        if (km > 0 || kcal > 0) {
+          const existingAct = appState.activityLogs.find(x => x.date === d);
+          if (!existingAct || existingAct.runningKm !== km || existingAct.activeKcal !== kcal) {
+            appState.activityLogs = appState.activityLogs.filter(x => x.date !== d);
+            appState.activityLogs.push({ date: d, runningKm: Number(km.toFixed(2)), activeKcal: Math.round(kcal) });
+            changed = true;
+          }
+          // Auto check-in the running/cardio habit when >= 1.5km or >= 250kcal
+          if (km >= 1.5 || kcal >= 250) {
+            const runHabit = (appState.habits || []).find(h => h.name.includes('跑步') || h.name.includes('有氧'));
+            if (runHabit) {
+              runHabit.logs = runHabit.logs || [];
+              if (!runHabit.logs.includes(d)) {
+                runHabit.logs.push(d);
+                changed = true;
+              }
+            }
+          }
+        }
+      });
+
+      if (changed) {
+        StorageService.save(appState);
+        renderApp();
+        if (!silent) showToast('已同步 Apple Watch 睡眠与运动数据 ✓');
+      }
+    } catch {}
+  },
+
+  async testHealthIngest() {
+    if (!this.client || !this.user) return showToast('请先登录云端账号');
+    const token = this.syncToken || await this.ensureSyncToken();
+    if (!token) return showToast('请先在 Supabase SQL Editor 运行 supabase_health_setup.sql');
+    const today = todayISO(0);
+    const { error } = await this.client.rpc('ingest_apple_health', {
+      p_token: token,
+      p_date: today,
+      p_bedtime: '23:18',
+      p_sleep_hours: 7.4,
+      p_running_km: 3.6,
+      p_active_kcal: 320
+    });
+    if (error) return showToast('测试失败：' + error.message);
+    await this.pullAppleHealthLogs(false);
+  },
+
   async signUp(email, password) {
     if (!this.client) return showToast('请先填写并保存 Supabase URL 和 Key');
     this.saveConfig(undefined, undefined, email);
@@ -137,7 +247,9 @@ const CloudSync = {
     this.user = data?.user || null;
     if (data?.session) {
       this.saveSessionTokens(data.session);
+      await this.ensureSyncToken();
       await this.pullAndMerge(true);
+      await this.pullAppleHealthLogs(true);
       this.subscribeRealtime();
       this.startPolling();
       this.updateUI();
@@ -154,8 +266,10 @@ const CloudSync = {
     if (error) return showToast('登录失败：' + error.message);
     this.user = data.user;
     this.saveSessionTokens(data.session);
+    await this.ensureSyncToken();
     this.updateUI();
     await this.pullAndMerge(false);
+    await this.pullAppleHealthLogs(true);
     this.subscribeRealtime();
     this.startPolling();
     showToast('已登录，云端同步已开启');
@@ -166,6 +280,7 @@ const CloudSync = {
     clearInterval(this.pollTimer);
     if (this.client) await this.client.auth.signOut();
     this.user = null;
+    this.syncToken = '';
     this.channel = null;
     this.clearSessionTokens();
     this.updateUI();
@@ -269,6 +384,7 @@ const CloudSync = {
     this.pollTimer = setInterval(() => {
       if (document.visibilityState === 'visible' && this.user && !this.isApplyingRemote) {
         this.pullAndMerge(true);
+        this.pullAppleHealthLogs(true);
       }
     }, 10000);
   },
@@ -289,6 +405,10 @@ const CloudSync = {
     const statusBox = document.getElementById('cloudAuthStatus');
     const authForm = document.getElementById('cloudAuthForm');
     const signedInBox = document.getElementById('cloudSignedInBox');
+    const tokenInput = document.getElementById('aw-token');
+    const endpointInput = document.getElementById('aw-endpoint');
+    if (endpointInput) endpointInput.value = `${this.getConfig().url.replace(/\/$/, '')}/rest/v1/rpc/ingest_apple_health`;
+    if (tokenInput) tokenInput.value = this.syncToken || (this.user ? '请先在 Supabase 运行建表脚本' : '登录后自动生成');
     if (!statusBox) return;
 
     if (this.user) {

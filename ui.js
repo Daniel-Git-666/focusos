@@ -504,12 +504,17 @@ function renderSleepCard() {
 function renderHabitsCard() {
   const last7 = Array.from({ length: 7 }, (_, i) => todayISO(i - 6));
   const dayLabels = ['日', '一', '二', '三', '四', '五', '六'];
+  const todayAct = (appState.activityLogs || []).find(a => a.date === todayISO(0));
+  const actBadge = todayAct
+    ? `<div style="font-size:11.5px;color:var(--sage);font-weight:600;margin-top:3px;">Apple Watch 今日 · ${todayAct.runningKm || 0} km · ${todayAct.activeKcal || 0} kcal</div>`
+    : '';
   return `
     <div class="card">
       <div class="card-head">
         <div>
           <div class="card-label">Habits</div>
           <div class="card-title">减脂与日常习惯</div>
+          ${actBadge}
         </div>
         <button class="btn-link" onclick="openAddHabit()">添加</button>
       </div>
@@ -1195,16 +1200,38 @@ document.getElementById('sbSignUpBtn').addEventListener('click', async () => {
 
 document.getElementById('sbSyncNowBtn').addEventListener('click', async () => {
   await CloudSync.pullAndMerge(false);
+  await CloudSync.pullAppleHealthLogs(false);
 });
 
 document.getElementById('sbSignOutBtn').addEventListener('click', async () => {
   await CloudSync.signOut();
 });
 
+document.getElementById('copyAwUrlBtn')?.addEventListener('click', () => {
+  const v = document.getElementById('aw-endpoint')?.value;
+  if (v) { navigator.clipboard?.writeText(v); showToast('已复制推送接口 URL'); }
+});
+
+document.getElementById('copyAwTokenBtn')?.addEventListener('click', () => {
+  const v = document.getElementById('aw-token')?.value;
+  if (v && !v.includes('请先') && !v.includes('登录')) { navigator.clipboard?.writeText(v); showToast('已复制专属同步密钥'); }
+  else showToast('请先完成 Supabase 建表并登录账号');
+});
+
+document.getElementById('testHealthIngestBtn')?.addEventListener('click', () => {
+  CloudSync.testHealthIngest();
+});
+
 window.addEventListener('focus', () => {
-  if (window.CloudSync && CloudSync.user) CloudSync.pullAndMerge(true);
+  if (window.CloudSync && CloudSync.user) {
+    CloudSync.pullAndMerge(true);
+    CloudSync.pullAppleHealthLogs(true);
+  }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && window.CloudSync && CloudSync.user) CloudSync.pullAndMerge(true);
+  if (document.visibilityState === 'visible' && window.CloudSync && CloudSync.user) {
+    CloudSync.pullAndMerge(true);
+    CloudSync.pullAppleHealthLogs(true);
+  }
 });
 
