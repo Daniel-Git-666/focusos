@@ -151,47 +151,29 @@
         </div>
       </div>
       <div class="form-group" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--hairline);">
-        <label>云端三端同步（MacBook / iPad Pro / iPhone）</label>
-        <div id="cloudAuthStatus" style="font-size:12px;color:var(--ink-secondary);margin-bottom:10px;">当前为本地双层保存模式</div>
-        <details style="margin-bottom:10px;font-size:12px;color:var(--ink-tertiary);">
-          <summary style="cursor:pointer;font-weight:500;">服务器连接配置（已内置，无需手动填写）</summary>
-          <div class="form-row" style="margin-top:8px;">
-            <div class="form-group">
-              <label>Supabase Project URL</label>
-              <input type="text" class="form-control" id="sb-url" placeholder="已内置" />
-            </div>
-            <div class="form-group">
-              <label>Supabase Anon Key</label>
-              <input type="password" class="form-control" id="sb-key" placeholder="已内置" />
-            </div>
-          </div>
-        </details>
-        <div id="cloudAuthForm">
-          <div class="form-row">
-            <div class="form-group">
-              <label>个人登录邮箱</label>
-              <input type="email" class="form-control" id="sb-email" placeholder="你的常用邮箱" />
-            </div>
-            <div class="form-group">
-              <label>登录密码（至少 6 位）</label>
-              <input type="password" class="form-control" id="sb-pass" placeholder="设置或输入密码" />
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button type="button" class="btn-obsidian" id="sbSignInBtn">登录并同步</button>
-            <button type="button" class="btn-subtle" id="sbSignUpBtn">首次注册账号</button>
+        <label>永久云端同步（MacBook / iPad Pro / iPhone 免登录）</label>
+        <div id="cloudAuthStatus" style="font-size:12px;color:var(--ink-secondary);margin-bottom:10px;">设置一个专属同步口令（至少 8 位），三端一次绑定永久免登录</div>
+        <div class="form-group">
+          <label>你的专属同步口令（至少 8 位字母或数字）</label>
+          <div style="display:flex;gap:6px;">
+            <input type="text" class="form-control" id="sync-key-input" autocomplete="off" placeholder="例如：daniel-focus-2026" />
+            <button type="button" class="btn-subtle" id="genSyncKeyBtn" style="white-space:nowrap;">随机生成</button>
           </div>
         </div>
-        <div id="cloudSignedInBox" style="display:none;gap:8px;flex-wrap:wrap;margin-top:8px;">
-          <button type="button" class="btn-obsidian" id="sbSyncNowBtn">立即双向同步</button>
-          <button type="button" class="btn-subtle" id="sbSignOutBtn">退出云端账号</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <button type="button" class="btn-obsidian" id="saveSyncKeyBtn">保存并开启永久同步</button>
+        </div>
+        <div id="cloudConnectedActions" style="display:none;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn-subtle" id="copyMagicLinkBtn">复制免登录专属链接（发给 iPad / iPhone）</button>
+          <button type="button" class="btn-subtle" id="sbSyncNowBtn">立即双向同步</button>
+          <button type="button" class="btn-subtle" id="sbSignOutBtn" style="color:var(--coral);">断开本机</button>
         </div>
       </div>
 
       <div class="form-group" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--hairline);">
         <label>Apple Watch Ultra 2 快捷指令自动同步</label>
         <p style="font-size:12px;color:var(--ink-tertiary);margin-bottom:10px;">
-          在 iPhone「快捷指令」中把睡眠与跑步数据 POST 到下方接口即可自动更新夜卡并点亮减脂打卡。
+          与上方共用同一个同步口令，在 iPhone「快捷指令」POST 到下方接口即可自动更新睡眠与跑步记录。
         </p>
         <div class="form-group">
           <label>快捷指令推送接口 URL</label>
@@ -201,7 +183,7 @@
           </div>
         </div>
         <div class="form-group">
-          <label>你的专属同步密钥 (p_token)</label>
+          <label>你的同步口令 (p_key)</label>
           <div style="display:flex;gap:6px;">
             <input type="text" class="form-control" id="aw-token" readonly />
             <button type="button" class="btn-subtle" id="copyAwTokenBtn" style="white-space:nowrap;">复制</button>

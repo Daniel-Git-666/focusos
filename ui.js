@@ -1163,48 +1163,36 @@ document.querySelectorAll('.modal-backdrop').forEach(bd => bd.addEventListener('
 })();
 
 document.getElementById('openSettingsBtn').addEventListener('click', () => {
-  const cfg = CloudSync.getConfig();
-  document.getElementById('sb-url').value = cfg.url || '';
-  document.getElementById('sb-key').value = cfg.key || '';
-  const em = document.getElementById('sb-email');
-  if (em && !em.value) em.value = cfg.email || '';
+  const inp = document.getElementById('sync-key-input');
+  if (inp && CloudSync.syncKey) inp.value = CloudSync.syncKey;
   CloudSync.updateUI();
 });
 
-async function ensureCloudClientFromInputs() {
-  const url = document.getElementById('sb-url').value.trim();
-  const key = document.getElementById('sb-key').value.trim();
-  if (!url || !key) { showToast('请先填写 Supabase URL 和 Anon Key'); return false; }
-  CloudSync.saveConfig(url, key);
-  if (!CloudSync.client || CloudSync.getConfig().url !== url) {
-    CloudSync.client = CloudSync.createSupabaseClient(url, key);
+document.getElementById('genSyncKeyBtn')?.addEventListener('click', () => {
+  const inp = document.getElementById('sync-key-input');
+  if (inp) inp.value = CloudSync.generateRandomKey();
+});
+
+document.getElementById('saveSyncKeyBtn')?.addEventListener('click', async () => {
+  const val = document.getElementById('sync-key-input')?.value || '';
+  await CloudSync.activateKey(val);
+});
+
+document.getElementById('copyMagicLinkBtn')?.addEventListener('click', () => {
+  const link = CloudSync.getMagicLink();
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(link).then(() => showToast('已复制免登录专属链接，发给 iPad / iPhone 打开即可'));
+  } else {
+    prompt('复制下方免登录专属链接：', link);
   }
-  return true;
-}
-
-document.getElementById('sbSignInBtn').addEventListener('click', async () => {
-  if (!(await ensureCloudClientFromInputs())) return;
-  const email = document.getElementById('sb-email').value.trim();
-  const pass = document.getElementById('sb-pass').value;
-  if (!email || !pass) return showToast('请输入邮箱和密码');
-  await CloudSync.signIn(email, pass);
 });
 
-document.getElementById('sbSignUpBtn').addEventListener('click', async () => {
-  if (!(await ensureCloudClientFromInputs())) return;
-  const email = document.getElementById('sb-email').value.trim();
-  const pass = document.getElementById('sb-pass').value;
-  if (!email || pass.length < 6) return showToast('请输入有效邮箱和至少 6 位密码');
-  await CloudSync.signUp(email, pass);
-});
-
-document.getElementById('sbSyncNowBtn').addEventListener('click', async () => {
+document.getElementById('sbSyncNowBtn')?.addEventListener('click', async () => {
   await CloudSync.pullAndMerge(false);
-  await CloudSync.pullAppleHealthLogs(false);
 });
 
-document.getElementById('sbSignOutBtn').addEventListener('click', async () => {
-  await CloudSync.signOut();
+document.getElementById('sbSignOutBtn')?.addEventListener('click', async () => {
+  await CloudSync.disconnect();
 });
 
 document.getElementById('copyAwUrlBtn')?.addEventListener('click', () => {
@@ -1214,8 +1202,8 @@ document.getElementById('copyAwUrlBtn')?.addEventListener('click', () => {
 
 document.getElementById('copyAwTokenBtn')?.addEventListener('click', () => {
   const v = document.getElementById('aw-token')?.value;
-  if (v && !v.includes('请先') && !v.includes('登录')) { navigator.clipboard?.writeText(v); showToast('已复制专属同步密钥'); }
-  else showToast('请先完成 Supabase 建表并登录账号');
+  if (v && CloudSync.syncKey) { navigator.clipboard?.writeText(v); showToast('已复制同步口令 p_key'); }
+  else showToast('请先在上方设置并保存同步口令');
 });
 
 document.getElementById('testHealthIngestBtn')?.addEventListener('click', () => {
@@ -1223,15 +1211,8 @@ document.getElementById('testHealthIngestBtn')?.addEventListener('click', () => 
 });
 
 window.addEventListener('focus', () => {
-  if (window.CloudSync && CloudSync.user) {
-    CloudSync.pullAndMerge(true);
-    CloudSync.pullAppleHealthLogs(true);
-  }
+  if (window.CloudSync && CloudSync.syncKey) CloudSync.pullAndMerge(true);
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && window.CloudSync && CloudSync.user) {
-    CloudSync.pullAndMerge(true);
-    CloudSync.pullAppleHealthLogs(true);
-  }
+  if (document.visibilityState === 'visible' && window.CloudSync && CloudSync.syncKey) CloudSync.pullAndMerge(true);
 });
-
