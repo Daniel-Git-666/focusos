@@ -33,7 +33,8 @@ StorageService.updateSaveIndicator = function(mode) {
     txt.textContent = '保存中';
   } else {
     dot.classList.remove('saving');
-    txt.textContent = `已保存 ${formatTimeHMS().slice(0, 5)}`;
+    const isSynced = Boolean(window.CloudSync && CloudSync.syncKey && !CloudSync.lastError);
+    txt.textContent = `${isSynced ? '云端已同步' : '已保存'} ${formatTimeHMS().slice(0, 5)}`;
   }
 };
 
@@ -299,8 +300,8 @@ function updateNoteContent(id, value, immediate = false) {
   n.content = value;
   n.updatedAt = new Date().toISOString();
   clearTimeout(noteSaveTimer);
-  if (immediate) StorageService.save(appState);
-  else noteSaveTimer = setTimeout(() => StorageService.save(appState), 300);
+  if (immediate) { StorageService.save(appState); if (window.CloudSync) CloudSync.schedulePush(); }
+  else noteSaveTimer = setTimeout(() => { StorageService.save(appState); if (window.CloudSync) CloudSync.schedulePush(); }, 300);
 }
 
 function toggleNotePin(id) {

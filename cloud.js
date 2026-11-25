@@ -1,4 +1,4 @@
-const CloudSync = {
+var CloudSync = window.CloudSync = {
   KEY_STORAGE: 'lsh_sync_key_v3',
   COOKIE_NAME: 'focusos_sync_key',
   DEFAULT_URL: 'https://txkzzlcfeexfnwqeeuzr.supabase.co',
@@ -118,6 +118,7 @@ const CloudSync = {
     const clean = (newKey || '').trim();
     if (clean.length < 8) return showToast('同步口令至少需要 8 位字符');
     await this.persistKey(clean);
+    try { history.replaceState(null, '', this.getMagicLink()); } catch {}
     if (!this.client && window.supabase) {
       this.client = window.supabase.createClient(this.DEFAULT_URL, this.DEFAULT_KEY, {
         auth: { persistSession: false, autoRefreshToken: false }
