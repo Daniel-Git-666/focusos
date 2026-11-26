@@ -167,30 +167,134 @@ var CloudSync = window.CloudSync = {
     }
   },
 
+  parseDateFlexible(str) {
+    if (!str) return null;
+    const s = String(str).trim();
+    const direct = new Date(s);
+    if (!isNaN(direct.getTime())) return direct;
+    // Handle Chinese iOS Shortcuts date formats e.g. "2026年11月25日 23:25" or "2026/11/25 下午11:25"
+    const m = s.match(/(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})日?\s*(上午|下午|AM|PM)?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/i);
+    if (m) {
+      let hr = parseInt(m[5], 10);
+      const ampm = (m[4] || '').toUpperCase();
+      if ((ampm === '下午' || ampm === 'PM') && hr < 12) hr += 12;
+      if ((ampm === '上午' || ampm === 'AM') && hr === 12) hr = 0;
+      return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10), hr, parseInt(m[6], 10), parseInt(m[7] || '0', 10));
+    }
+    return null;
+  },
+
+  normalizeSleepStage(label) {
+    const s = String(label || '').trim().toLowerCase();
+    if (!s || s.includes('in bed') || s.includes('卧床')) return null;
+    if (s.includes('awake') || s.includes('清醒')) return 'awake';
+    if (s.includes('rem') || s.includes('快速动眼') || s.includes('眼动')) return 'rem';
+    if (s.includes('deep') || s.includes('深度') || s.includes('深睡')) return 'deep';
+    if (s.includes('core') || s.includes('核心') || s.includes('浅睡') || s.includes('asleep') || s.includes('睡眠')) return 'core';
+    return null;
+  },
+
+  parseSleepRaw(rawText, logDate) {
+    if (!rawText || typeof rawText !== 'string' || !rawText.trim()) return null;
+    const parts = (logDate || todayISO(0)).split('-').map(Number);
+    if (parts.length !== 3) return null;
+    // Window: previous day 20:00 to logDate 14:00 (user-specified)
+    const winStart = new Date(parts[0], parts[1] - 1, parts[2] - 1, 20, 0, 0, 0).getTime();
+    const winEnd = new Date(parts[0], parts[1] - 1, parts[2], 14, 0, 0, 0).getTime();
+
+    const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const seen = new Set();
+    const segments = [];
+
+    lines.forEach(line => {
+      const cols = line.split('|').map(c => c.trim());
+      if (cols.length < 3) return;
+      const stage = this.normalizeSleepStage(cols[0]);
+      if (!stage) return;
+      const sd = this.parseDateFlexible(cols[1]);
+      const ed = this.parseDateFlexible(cols[2]);
+      if (!sd || !ed) return;
+      const sMs = Math.max(sd.getTime(), winStart);
+      const eMs = Math.min(ed.getTime(), winEnd);
+      if (eMs <= sMs) return;
+      const key = `${stage}_${sMs}_${eMs}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const fmt = (ms) => {
+        const dt = new Date(ms);
+        return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+      };
+      segments.push({
+        stage,
+        startMs: sMs,
+        endMs: eMs,
+        durMin: Math.round((eMs - sMs) / 60000),
+        startLabel: fmt(sMs),
+        endLabel: fmt(eMs)
+      });
+    });
+
+    if (!segments.length) return null;
+    segments.sort((a, b) => a.startMs - b.startMs);
+
+    const asleepSegs = segments.filter(s => s.stage !== 'awake');
+    if (!asleepSegs.length) return null;
+
+    const deepMin = segments.filter(s => s.stage === 'deep').reduce((a, b) => a + b.durMin, 0);
+    const coreMin = segments.filter(s => s.stage === 'core').reduce((a, b) => a + b.durMin, 0);
+    const remMin = segments.filter(s => s.stage === 'rem').reduce((a, b) => a + b.durMin, 0);
+    const awakeMin = segments.filter(s => s.stage === 'awake').reduce((a, b) => a + b.durMin, 0);
+    const totalAsleepMin = deepMin + coreMin + remMin;
+    if (totalAsleepMin <= 0) return null;
+
+    return {
+      bedtime: asleepSegs[0].startLabel,
+      wakeTime: asleepSegs[asleepSegs.length - 1].endLabel,
+      duration: Number((totalAsleepMin / 60).toFixed(1)),
+      stages: { deepMin, coreMin, remMin, awakeMin, totalAsleepMin },
+      segments
+    };
+  },
+
   mergeHealthLogs(healthLogs = []) {
     if (!Array.isArray(healthLogs) || !healthLogs.length) return false;
     let changed = false;
     appState.sleepLogs = appState.sleepLogs || [];
     appState.activityLogs = appState.activityLogs || [];
+    const skipDemo = Boolean(appState.meta?.demoHealthCleared);
 
     healthLogs.forEach(row => {
       const d = row.log_date;
-      const hrs = Number(row.sleep_hours || 0);
-      if (hrs > 0) {
+      const parsedStages = this.parseSleepRaw(row.sleep_raw, d);
+      const hrs = parsedStages ? parsedStages.duration : Number(row.sleep_hours || 0);
+      const nextBed = parsedStages ? parsedStages.bedtime : (row.bedtime || '23:30');
+      const isSimulatedSleep = skipDemo && Number(hrs.toFixed(1)) === 7.4 && (nextBed === '23:18' || nextBed === '23:30') && !row.sleep_raw;
+      const isSimulatedStages = skipDemo && typeof row.sleep_raw === 'string' && row.sleep_raw.includes('SIMULATED_FOCUSOS');
+
+      if (hrs > 0 && !isSimulatedSleep && !isSimulatedStages) {
         const existing = appState.sleepLogs.find(x => x.date === d);
-        const nextBed = row.bedtime || '23:30';
-        if (!existing || existing.duration !== Number(hrs.toFixed(1)) || existing.bedtime !== nextBed) {
+        const nextSegCount = parsedStages ? parsedStages.segments.length : 0;
+        const oldSegCount = existing?.segments?.length || 0;
+        if (!existing || existing.duration !== Number(hrs.toFixed(1)) || existing.bedtime !== nextBed || nextSegCount !== oldSegCount) {
           appState.sleepLogs = appState.sleepLogs.filter(x => x.date !== d);
           appState.sleepLogs.push({
-            id: existing?.id || uid(), date: d, bedtime: nextBed,
-            duration: Number(hrs.toFixed(1)), quality: 4, source: 'apple_watch'
+            id: existing?.id || uid(),
+            date: d,
+            bedtime: nextBed,
+            wakeTime: parsedStages ? parsedStages.wakeTime : (existing?.wakeTime || ''),
+            duration: Number(hrs.toFixed(1)),
+            quality: 4,
+            source: 'apple_watch',
+            stages: parsedStages ? parsedStages.stages : (existing?.stages || null),
+            segments: parsedStages ? parsedStages.segments : (existing?.segments || null)
           });
           changed = true;
         }
       }
       const km = Number(row.running_km || 0);
       const kcal = Number(row.active_kcal || 0);
-      if (km > 0 || kcal > 0) {
+      const isSimulatedAct = skipDemo && Number(km.toFixed(2)) === 3.6 && Math.round(kcal) === 320;
+      if ((km > 0 || kcal > 0) && !isSimulatedAct) {
         const existingAct = appState.activityLogs.find(x => x.date === d);
         if (!existingAct || existingAct.runningKm !== Number(km.toFixed(2)) || existingAct.activeKcal !== Math.round(kcal)) {
           appState.activityLogs = appState.activityLogs.filter(x => x.date !== d);
@@ -218,6 +322,8 @@ var CloudSync = window.CloudSync = {
 
       if (!data || !data.found || !data.payload) {
         this.mergeHealthLogs(data?.health_logs || []);
+        this.lastHealthLogs = data?.health_logs || [];
+        this.renderHealthPreview();
         await this.pushNow();
         renderApp();
         return true;
@@ -247,6 +353,8 @@ var CloudSync = window.CloudSync = {
         updatedUI = true;
       }
 
+      this.lastHealthLogs = data.health_logs || [];
+      this.renderHealthPreview();
       if (updatedUI) renderApp();
       this.setDockStatus('synced');
       return true;
@@ -259,19 +367,95 @@ var CloudSync = window.CloudSync = {
     }
   },
 
+  async clearDemoHealthData() {
+    appState.meta = appState.meta || {};
+    appState.meta.demoHealthCleared = true;
+    appState.sleepLogs = (appState.sleepLogs || []).filter(x =>
+      x.source === 'apple_watch' && !(Number(x.duration) === 7.4 && (x.bedtime === '23:18' || x.bedtime === '23:30'))
+    );
+    appState.activityLogs = (appState.activityLogs || []).filter(x => !(Number(x.runningKm) === 3.6 && Math.round(Number(x.activeKcal)) === 320));
+    this.mergeHealthLogs(this.lastHealthLogs || []);
+    StorageService.save(appState);
+    await this.pushNow();
+    renderApp();
+    this.renderHealthPreview();
+    showToast('已清除演示睡眠与测试数据，现仅展示真实记录 ✓');
+  },
+
+  mergeImportData(incoming) {
+    if (!incoming || typeof incoming !== 'object') return 0;
+    let added = 0;
+    const mergeByKey = (targetArr, srcArr, keyFn) => {
+      if (!Array.isArray(srcArr)) return targetArr;
+      const existingKeys = new Set((targetArr || []).map(keyFn));
+      srcArr.forEach(item => {
+        const k = keyFn(item);
+        if (!existingKeys.has(k)) {
+          targetArr.push({ ...item, id: item.id || uid(), updatedAt: new Date().toISOString() });
+          existingKeys.add(k);
+          added++;
+        }
+      });
+      return targetArr;
+    };
+    appState.tasks = mergeByKey(appState.tasks || [], incoming.tasks, x => (x.title || '').trim());
+    appState.sprints = mergeByKey(appState.sprints || [], incoming.sprints, x => `${x.date}_${(x.title || '').trim()}`);
+    appState.meds = mergeByKey(appState.meds || [], incoming.meds, x => (x.name || '').trim());
+    appState.habits = mergeByKey(appState.habits || [], incoming.habits, x => (x.name || '').trim());
+    appState.anniversaries = mergeByKey(appState.anniversaries || [], incoming.anniversaries, x => (x.title || '').trim());
+    appState.notes = mergeByKey(appState.notes || [], incoming.notes, x => (x.content || '').trim().slice(0, 60));
+    appState.bookmarks = mergeByKey(appState.bookmarks || [], incoming.bookmarks, x => (x.url || '').trim());
+    appState.sleepLogs = mergeByKey(appState.sleepLogs || [], incoming.sleepLogs, x => x.date);
+    appState.activityLogs = mergeByKey(appState.activityLogs || [], incoming.activityLogs, x => x.date);
+    return added;
+  },
+
+  renderHealthPreview() {
+    const box = document.getElementById('aw-preview-box');
+    if (!box) return;
+    const logs = (this.lastHealthLogs || []).slice(-5).reverse();
+    if (!logs.length) {
+      box.textContent = '云端暂未收到手表记录（运行 iPhone 快捷指令后会自动显示在这里）';
+      return;
+    }
+    box.innerHTML = logs.map(r => {
+      const parsed = this.parseSleepRaw(r.sleep_raw, r.log_date);
+      const sleepStr = parsed
+        ? `睡眠 ${parsed.duration.toFixed(1)}h (${parsed.bedtime}→${parsed.wakeTime} · 深${parsed.stages.deepMin}m/核${parsed.stages.coreMin}m/REM${parsed.stages.remMin}m)`
+        : `睡眠 ${Number(r.sleep_hours || 0).toFixed(1)}h (${r.bedtime || '--'})`;
+      return `<div>${r.log_date} · ${sleepStr} · 跑步 ${Number(r.running_km || 0).toFixed(2)} km · ${Math.round(r.active_kcal || 0)} kcal</div>`;
+    }).join('');
+  },
+
   async testHealthIngest() {
     if (!this.client || !this.syncKey) return showToast('请先在上方设置并保存你的永久同步口令');
+    if (appState.meta) appState.meta.demoHealthCleared = false;
+    const yest = todayISO(-1);
+    const tod = todayISO(0);
+    const sampleRaw = [
+      `核心睡眠|${yest}T23:18:00+08:00|${tod}T00:05:00+08:00`,
+      `深度睡眠|${tod}T00:05:00+08:00|${tod}T01:02:00+08:00`,
+      `核心睡眠|${tod}T01:02:00+08:00|${tod}T02:15:00+08:00`,
+      `快速动眼|${tod}T02:15:00+08:00|${tod}T03:00:00+08:00`,
+      `清醒|${tod}T03:00:00+08:00|${tod}T03:10:00+08:00`,
+      `核心睡眠|${tod}T03:10:00+08:00|${tod}T04:20:00+08:00`,
+      `深度睡眠|${tod}T04:20:00+08:00|${tod}T04:55:00+08:00`,
+      `核心睡眠|${tod}T04:55:00+08:00|${tod}T05:55:00+08:00`,
+      `快速动眼|${tod}T05:55:00+08:00|${tod}T06:52:00+08:00`,
+      `#SIMULATED_FOCUSOS`
+    ].join('\n');
     const { error } = await this.client.rpc('ingest_apple_health_v2', {
       p_key: this.syncKey,
-      p_date: todayISO(0),
+      p_date: tod,
       p_bedtime: '23:18',
       p_sleep_hours: 7.4,
       p_running_km: 3.6,
-      p_active_kcal: 320
+      p_active_kcal: 320,
+      p_sleep_raw: sampleRaw
     });
     if (error) return showToast('测试失败：' + error.message);
     await this.pullAndMerge(true);
-    showToast('模拟手表同步成功！已更新睡眠与跑步记录 ✓');
+    showToast('模拟手表同步成功！已更新睡眠阶段与跑步记录 ✓');
   },
 
   startPolling() {

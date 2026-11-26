@@ -163,6 +163,13 @@ function isEarlyBedtime(bedtime, target = '23:30') {
   return bedtimeToMinutes(bedtime) <= bedtimeToMinutes(target);
 }
 
+function formatMinHM(mins) {
+  const m = Math.max(0, Math.round(mins || 0));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return h > 0 ? `${h}h${r > 0 ? r + 'm' : ''}` : `${r}m`;
+}
+
 function getSleepStats() {
   const logs = [...(appState.sleepLogs || [])].sort((a, b) => a.date.localeCompare(b.date));
   const recent = logs.slice(-7);
@@ -173,8 +180,21 @@ function getSleepStats() {
     if (isEarlyBedtime(logs[i].bedtime, target)) earlyStreak++;
     else break;
   }
+  // Sleep regularity: average absolute deviation from 7-day mean bedtime (<= 30 min = 非常规律)
+  let regDev = null;
+  let regLabel = '待累积';
+  let regCls = '';
+  if (recent.length >= 2) {
+    const mins = recent.map(x => bedtimeToMinutes(x.bedtime || '23:30'));
+    const mean = mins.reduce((a, b) => a + b, 0) / mins.length;
+    const avgAbsDev = Math.round(mins.reduce((a, b) => a + Math.abs(b - mean), 0) / mins.length);
+    regDev = avgAbsDev;
+    if (avgAbsDev <= 30) { regLabel = '非常规律'; regCls = 'mint'; }
+    else if (avgAbsDev <= 60) { regLabel = '较规律'; regCls = 'amber'; }
+    else { regLabel = '波动偏大'; regCls = 'coral'; }
+  }
   const latest = logs[logs.length - 1] || null;
-  return { recent, avgDur, earlyStreak, latest, target };
+  return { recent, avgDur, earlyStreak, latest, target, regDev, regLabel, regCls };
 }
 
 function ddlText(dateStr) {
@@ -443,6 +463,56 @@ function renderTaskRow(t) {
   `;
 }
 
+function renderSleepStagesChart(log) {
+  if (!log || !Array.isArray(log.segments) || !log.segments.length || !log.stages) return '';
+  const segs = log.segments;
+  const minMs = segs[0].startMs;
+  const maxMs = Math.max(...segs.map(s => s.endMs));
+  const span = Math.max(1, maxMs - minMs);
+  const rows = [
+    { key: 'awake', name: '清醒' },
+    { key: 'rem', name: 'REM' },
+    { key: 'core', name: '核心' },
+    { key: 'deep', name: '深睡' }
+  ];
+  const stg = log.stages;
+  const total = Math.max(1, stg.totalAsleepMin || 1);
+  const deepPct = Math.round((stg.deepMin / total) * 100);
+  const corePct = Math.round((stg.coreMin / total) * 100);
+  const remPct = Math.round((stg.remMin / total) * 100);
+
+  return `
+    <div class="stage-hypno">
+      <div class="stage-hypno-head">
+        <span>Apple Watch 睡眠阶段 (${log.date.slice(5)})</span>
+        <span>实际入睡 ${formatMinHM(stg.totalAsleepMin)}</span>
+      </div>
+      ${rows.map(r => `
+        <div class="stage-row">
+          <span class="stage-label">${r.name}</span>
+          <div class="stage-track">
+            ${segs.filter(s => s.stage === r.key).map(s => {
+              const left = ((s.startMs - minMs) / span) * 100;
+              const width = Math.max(1.2, ((s.endMs - s.startMs) / span) * 100);
+              return `<div class="stage-seg ${r.key}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%" title="${r.name} ${s.startLabel}–${s.endLabel} (${s.durMin}分钟)"></div>`;
+            }).join('')}
+          </div>
+        </div>
+      `).join('')}
+      <div class="stage-axis">
+        <span>${log.bedtime || segs[0].startLabel}</span>
+        <span>${log.wakeTime || segs[segs.length - 1].endLabel}</span>
+      </div>
+      <div class="stage-pills">
+        <span class="stage-pill"><span class="stage-dot deep"></span>深睡 ${formatMinHM(stg.deepMin)} (${deepPct}%)</span>
+        <span class="stage-pill"><span class="stage-dot core"></span>核心 ${formatMinHM(stg.coreMin)} (${corePct}%)</span>
+        <span class="stage-pill"><span class="stage-dot rem"></span>REM ${formatMinHM(stg.remMin)} (${remPct}%)</span>
+        <span class="stage-pill"><span class="stage-dot awake"></span>清醒 ${formatMinHM(stg.awakeMin)}</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderSleepCard() {
   const st = getSleepStats();
   const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
@@ -451,13 +521,19 @@ function renderSleepCard() {
     : (st.earlyStreak === 1
       ? `昨晚早睡达标，今晚继续保持连击`
       : `目标 ${st.target} 前入睡，睡前搭配甘氨酸镁更易放松`);
+  const sortedActs = [...(appState.activityLogs || [])].sort((a, b) => a.date.localeCompare(b.date));
+  const todayAct = sortedActs.find(a => a.date === todayISO(0)) || sortedActs[sortedActs.length - 1] || null;
+  const awLine = todayAct
+    ? `<div style="margin-top:8px;padding:8px 12px;border-radius:10px;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.22);display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#A7F3D0;"><span>Apple Watch ${todayAct.date === todayISO(0) ? '今日运动' : todayAct.date.slice(5) + ' 同步'}</span><strong>${Number(todayAct.runningKm || 0).toFixed(2)} km · ${Math.round(todayAct.activeKcal || 0)} kcal</strong></div>`
+    : '';
+  const stageChartHtml = renderSleepStagesChart(st.latest);
 
   return `
     <div class="card night-card">
       <div class="card-head">
         <div>
           <div class="card-label">Sleep Rhythm</div>
-          <div class="card-title">睡眠与早睡激励</div>
+          <div class="card-title">睡眠阶段与规律性</div>
         </div>
         <button class="btn-subtle" onclick="openAddSleepModal()">记录昨晚</button>
       </div>
@@ -469,12 +545,19 @@ function renderSleepCard() {
         <div>
           <div class="night-stat-label">昨晚入睡</div>
           <div class="night-stat-val">${st.latest ? st.latest.bedtime : '--:--'}</div>
+          ${st.latest?.wakeTime ? `<div class="night-stat-sub">醒来 ${st.latest.wakeTime}</div>` : ''}
         </div>
         <div>
           <div class="night-stat-label">早睡连击</div>
           <div class="night-stat-val mint">${st.earlyStreak} 天</div>
         </div>
+        <div>
+          <div class="night-stat-label">7日规律性</div>
+          <div class="night-stat-val ${st.regCls}">${st.regDev !== null ? `±${st.regDev}分` : '--'}</div>
+          <div class="night-stat-sub">${st.regLabel}</div>
+        </div>
       </div>
+      ${stageChartHtml}
       <div class="night-chart">
         ${Array.from({ length: 7 }, (_, i) => todayISO(i - 6)).map(d => {
           const log = (appState.sleepLogs || []).find(x => x.date === d);
@@ -497,6 +580,7 @@ function renderSleepCard() {
           `;
         }).join('')}
       </div>
+      ${awLine}
       <div class="night-caption">${ICONS.moon}<span>${tip}</span></div>
     </div>
   `;
@@ -1101,6 +1185,20 @@ document.getElementById('taskForm').addEventListener('submit', (e) => {
   showToast(id ? '任务已更新' : '已保存');
 });
 
+document.getElementById('mergeImportFileInput')?.addEventListener('change', (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const parsed = JSON.parse(ev.target.result);
+      const count = CloudSync.mergeImportData(parsed);
+      commitState(); closeModal('settingsModal');
+      showToast(count > 0 ? `已合并新增 ${count} 条记录（原有数据完整保留）✓` : '未发现需要新增的记录');
+    } catch { showToast('JSON 文件格式无效'); }
+  };
+  reader.readAsText(file); e.target.value = '';
+});
+
 document.getElementById('importFileInput').addEventListener('change', (e) => {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
@@ -1167,6 +1265,7 @@ document.getElementById('openSettingsBtn').addEventListener('click', () => {
   const inp = document.getElementById('sync-key-input');
   if (inp && CloudSync.syncKey) inp.value = CloudSync.syncKey;
   CloudSync.updateUI();
+  CloudSync.renderHealthPreview();
 });
 
 document.getElementById('genSyncKeyBtn')?.addEventListener('click', () => {
@@ -1209,6 +1308,10 @@ document.getElementById('copyAwTokenBtn')?.addEventListener('click', () => {
 
 document.getElementById('testHealthIngestBtn')?.addEventListener('click', () => {
   CloudSync.testHealthIngest();
+});
+
+document.getElementById('clearDemoHealthBtn')?.addEventListener('click', () => {
+  CloudSync.clearDemoHealthData();
 });
 
 window.addEventListener('focus', () => {

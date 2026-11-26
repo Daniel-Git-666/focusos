@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="FocusOS" />
   <title>FocusOS · 学习与生活个人看板</title>
   <link rel="manifest" href="./manifest.json" />
-  <link rel="stylesheet" href="./styles.css?v=20261125" />
+  <link rel="stylesheet" href="./styles.css?v=20261125c" />
 </head>
 <body>
   <!-- Floating Translucent macOS Navigation Dock -->
@@ -140,11 +140,15 @@
         </div>
       </div>
       <div class="form-group">
-        <label>JSON 备份与恢复</label>
+        <label>JSON 备份与合并导入</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn-subtle" id="modalExportBtn">导出 JSON 备份</button>
           <label class="btn-subtle" style="cursor:pointer;">
-            导入 JSON 备份
+            合并导入 JSON（不覆盖旧数据）
+            <input type="file" id="mergeImportFileInput" accept=".json" style="display:none;" />
+          </label>
+          <label class="btn-subtle" style="cursor:pointer;">
+            覆盖恢复备份
             <input type="file" id="importFileInput" accept=".json" style="display:none;" />
           </label>
           <button class="btn-subtle" id="resetDemoBtn">重置初始数据</button>
@@ -189,8 +193,12 @@
             <button type="button" class="btn-subtle" id="copyAwTokenBtn" style="white-space:nowrap;">复制</button>
           </div>
         </div>
+        <div id="aw-preview-box" style="background:var(--surface-muted);border:1px solid var(--hairline);border-radius:var(--r-md);padding:10px 12px;font-size:11.5px;color:var(--ink-secondary);margin-bottom:10px;line-height:1.6;">
+          正在读取云端手表同步记录...
+        </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="btn-obsidian" id="testHealthIngestBtn">测试模拟手表同步</button>
+          <button type="button" class="btn-obsidian" id="clearDemoHealthBtn">清除示例睡眠与测试数据</button>
+          <button type="button" class="btn-subtle" id="testHealthIngestBtn">测试模拟同步</button>
           <label class="btn-subtle" style="cursor:pointer;">
             手动导入健康 JSON
             <input type="file" id="importHealthInput" accept=".json" style="display:none;" />
@@ -212,9 +220,9 @@
   </div>
 
   <div class="toast" id="toast"></div>
-  <script src="./storage.js?v=20261125"></script>
+  <script src="./storage.js?v=20261125c"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="./cloud.js?v=20261125"></script>
-  <script src="./ui.js?v=20261125"></script>
+  <script src="./cloud.js?v=20261125c"></script>
+  <script src="./ui.js?v=20261125c"></script>
 </body>
 </html>

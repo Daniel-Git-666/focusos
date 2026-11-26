@@ -682,29 +682,120 @@ button:active { transform: scale(0.975); }
 
 .night-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  padding-bottom: 18px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding-bottom: 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
-.night-stat-label { font-size: 11px; color: rgba(255, 255, 255, 0.52); }
+.night-stat-label { font-size: 10.5px; color: rgba(255, 255, 255, 0.52); }
 .night-stat-val {
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 700;
-  letter-spacing: -0.6px;
+  letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
 }
+.night-stat-sub {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.48);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
 .night-stat-val.mint { color: #5EEAD4; }
+.night-stat-val.amber { color: #FBBF24; }
+.night-stat-val.coral { color: #FB7185; }
+
+/* Apple Health 4-Stage Sleep Hypnogram */
+.stage-hypno {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  padding: 12px 12px 10px;
+  margin-bottom: 14px;
+}
+.stage-hypno-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+  margin-bottom: 8px;
+}
+.stage-row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: center;
+  gap: 8px;
+  height: 16px;
+  margin-bottom: 4px;
+}
+.stage-label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  text-align: right;
+}
+.stage-track {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.045);
+  overflow: hidden;
+}
+.stage-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  min-width: 3px;
+}
+.stage-seg.awake { background: #FF6B6B; }
+.stage-seg.rem   { background: #38BDF8; }
+.stage-seg.core  { background: #3B82F6; }
+.stage-seg.deep  { background: #6366F1; }
+
+.stage-axis {
+  display: flex;
+  justify-content: space-between;
+  padding-left: 52px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.42);
+  font-variant-numeric: tabular-nums;
+}
+.stage-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.stage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.78);
+  font-variant-numeric: tabular-nums;
+}
+.stage-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.stage-dot.awake { background: #FF6B6B; }
+.stage-dot.rem   { background: #38BDF8; }
+.stage-dot.core  { background: #3B82F6; }
+.stage-dot.deep  { background: #6366F1; }
 
 .night-chart {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 10px;
-  height: 76px;
-  margin-bottom: 16px;
+  height: 68px;
+  margin-bottom: 14px;
 }
 .night-bar-col {
   flex: 1;
@@ -731,6 +822,7 @@ button:active { transform: scale(0.975); }
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: 10px;
 }
 
 /* 5. Minimal Habit Tracker */
